@@ -1,6 +1,6 @@
 import { GoogleAuth } from 'google-auth-library'
 import { google } from 'googleapis'
-
+import 'dotenv/config'
 /**
  * @class GoogleSheetService
  * Esta clase encapsula toda la lógica para interactuar con Google Sheets.

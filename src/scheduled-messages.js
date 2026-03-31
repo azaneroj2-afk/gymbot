@@ -1,6 +1,6 @@
 import googleSheetService from './sheets.js'
 import chatHistoryService from './chat-history.js'
-
+import 'dotenv/config'
 /**
  * @class ScheduledMessageService
  * Esta clase maneja el sistema de mensajes programados.

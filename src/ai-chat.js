@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import Groq from 'groq-sdk'
 import googleSheetService from './sheets.js'
 import chatHistoryService from './chat-history.js'
@@ -13,7 +14,8 @@ class GroqService {
         this.groq = new Groq({
             apiKey: process.env.GROQ_API_KEY,
         })
-        this.settings = null
+        this.settings = googleSheetService.getPrompts()
+        console.log("GROQ KEY:", process.env.GROQ_API_KEY)
     }
 
     /**
@@ -46,7 +48,7 @@ class GroqService {
             const messages = [
                 {
                     role: 'system',
-                    content: this.settings.system_prompt || 'Eres un asistente útil.',
+                    content: this.settings.system_prompt || 'Eres un  asesor de ventas del gimnasio GOLDEN GYM, tu tarea es responder a las preguntas de los clientes de manera clara y amigable, utilizando la información que tienes sobre nuestros servicios, horarios y promociones. Si no sabes la respuesta, di que no estás seguro y ofrece ayudar con otra cosa, por otro lado necesito que actues con seriedad',
                 }
             ]
 
@@ -71,13 +73,18 @@ class GroqService {
                 stream: false,
             })
 
-            const aiResponse = chatCompletion.choices[0]?.message?.content || 'No he podido generar una respuesta.'
+            if (!chatCompletion || !chatCompletion.choices || chatCompletion.choices.length === 0) {
+                console.error('❌ RESPUESTA COMPLETA DE GROQ:', JSON.stringify(chatCompletion, null, 2))
+                return 'Error: la IA no devolvió una respuesta válida.'
+            }
+
+            const aiResponse = chatCompletion.choices[0].message?.content || 'No he podido generar una respuesta.'
             
             if (phoneNumber) {
                 await chatHistoryService.saveMessage(phoneNumber, 'user', userInput)
                 await chatHistoryService.saveMessage(phoneNumber, 'assistant', aiResponse)
             }
-            
+            console.log('🧠 RAW GROQ:', chatCompletion)
             return aiResponse
         } catch (error) {
             console.error('❌ Error al contactar con la API de Groq:', error)

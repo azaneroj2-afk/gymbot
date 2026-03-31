@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import qrcode from 'qrcode-terminal'
 import { createBot, createProvider, createFlow, addKeyword, EVENTS } from '@builderbot/bot'
 import { MemoryDB as Database } from '@builderbot/bot'
 import { BaileysProvider as Provider } from '@builderbot/provider-baileys'
@@ -9,57 +10,175 @@ import scheduledMessageService from './scheduled-messages.js'
 
 const PORT = process.env.PORT ?? 3008
 
+// 🔥 NORMALIZAR TEXTO
+const normalizeText = (text) => {
+    return text
+        .toLowerCase()
+        .trim()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+}
+const blockedUsers = new Map()
 const dynamicFlow = addKeyword(EVENTS.WELCOME)
-    .addAction(async (ctx, { flowDynamic }) => {
-        const flows = await googleSheetService.getFlows()
-        const userInput = ctx.body.toLowerCase().trim()
+    .addAction(async (ctx, { flowDynamic, provider }) => {
+        try {
+            const flows = await googleSheetService.getFlows()
 
-        const triggeredFlow = flows.find(f => {
-            if (!f.addKeyword) return false
-            const sheetKeyword = f.addKeyword.toLowerCase().trim()
-            return userInput.includes(sheetKeyword)
-        })
-
-        if (triggeredFlow) {
-            const answer = triggeredFlow.addAnswer
-            const mediaUrl = triggeredFlow.media && triggeredFlow.media.trim()
+            const userInputRaw = ctx.body || ''
+            const userInput = normalizeText(userInputRaw)
             const phoneNumber = ctx.from
-            
-            await chatHistoryService.saveMessage(phoneNumber, 'user', userInput)
-            await chatHistoryService.saveMessage(phoneNumber, 'assistant', answer)
 
-            if (mediaUrl) {
-                await flowDynamic(answer, { media: mediaUrl })
-            } else {
-                await flowDynamic(answer)
+            console.log(`📩 Mensaje recibido: ${userInputRaw}`)
+
+               const now = Date.now()
+
+            if (blockedUsers.has(phoneNumber)) {
+            const unblockTime = blockedUsers.get(phoneNumber)
+
+            if (now < unblockTime) {
+             console.log("🚫 Usuario bloqueado temporalmente:", phoneNumber)
+             return
+                } else {
+             // ⏳ ya expiró → lo eliminamos
+                blockedUsers.delete(phoneNumber)
+        console.log("✅ Usuario desbloqueado:", phoneNumber)
             }
-        } else {
-            console.log('🤖 No se encontró palabra clave, derivando a la IA...')
-            const phoneNumber = ctx.from
-            const aiResponse = await groqService.getResponse(userInput, phoneNumber)
-            await flowDynamic(aiResponse)
+}
+            // 🚫 1. BLOQUEO DE PROMPT INJECTION / TROLL
+            const forbiddenPatterns = [
+                "ignora", "ignore", "actua como", "actúa como",
+                "roleplay", "kawaii", "anime", "uwu", "senpai",
+                "yamete", "daisuki", "amochito"
+            ]
+
+            if (forbiddenPatterns.some(p => userInput.includes(p))) {
+                return await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
+            }
+
+            // 🛑 2. DERIVACIÓN A ASESOR HUMANO
+            if (
+                userInput.includes('asesor') ||
+                userInput.includes('humano') ||
+                userInput.includes('persona')
+            ) {
+                console.log("👩‍💼 Cliente solicita asesor:", phoneNumber)
+
+                await flowDynamic(` 
+                    👉 Perfecto, un asesor te atenderá en breve.
+                    📌 Te responderán por este mismo chat.
+                    🛒 Mantente atento para continuar tu inscripción.`)
+
+                blockedUsers.set(phoneNumber, Date.now() + 1800000)
+                return
+            }
+
+            // 💰 3. DETECCIÓN DE PAGO (PRIORIDAD MÁXIMA)
+            if (
+                userInput.includes('ya pague') ||
+                userInput.includes('ya pague') ||
+                userInput.includes('ya yapie') ||
+                userInput.includes('ya yapee') ||
+                userInput.includes('pagado') ||
+                userInput.includes('listo') ||
+                userInput.includes('ya hice el pago') ||
+                userInput.includes('ya transferi')
+            ) {
+                console.log("💰 Cliente pagó → pasar a humano:", phoneNumber)
+
+                await flowDynamic(`     
+                    👉 Perfecto, tu pago está en proceso de validación.
+                    👉 Un asesor te atenderá en breve
+                    📌 Envía tu captura + nombre completo + DNI + celular.
+                    🛒 También puedes acercarte al gimnasio para activar tu acceso.`)
+
+                blockedUsers.set(phoneNumber, Date.now() + 10000)
+                
+                return
+            }
+
+            // 🔍 4. BUSCAR FLUJO EN SHEETS
+            const triggeredFlow = flows.find(f => {
+                if (!f.addKeyword) return false
+
+                const keywords = f.addKeyword
+                    .split(',')
+                    .map(k => normalizeText(k))
+
+                return keywords.some(keyword => userInput.includes(keyword))
+            })
+
+            if (triggeredFlow) {
+                console.log("✅ Flujo detectado:", triggeredFlow.addKeyword)
+
+                const answer = triggeredFlow.addAnswer
+                const mediaUrl = triggeredFlow.media?.trim()
+
+                await chatHistoryService.saveMessage(phoneNumber, 'user', userInputRaw)
+                await chatHistoryService.saveMessage(phoneNumber, 'assistant', answer)
+
+                if (mediaUrl) {
+                    await flowDynamic(answer, { media: mediaUrl })
+                } else {
+                    await flowDynamic(answer)
+                }
+
+                return
+            }
+
+            // 🤖 5. FALLBACK IA ULTRA CONTROLADO
+            console.log('🤖 Usando IA controlada...')
+
+            const aiResponse = await groqService.getResponse(userInputRaw, phoneNumber)
+
+            const invalidPatterns = [
+                "no puedo", "lo siento", "no estoy programado",
+                "kawaii", "anime", "uwu", "senpai",
+                "¿como estas?", "hablar contigo",
+                "sucursales", "direcciones", "ofertas"
+            ]
+
+            let filteredResponse = aiResponse
+                .replace(/\*.*?\*/g, '')
+                .trim()
+
+            const isInvalid = invalidPatterns.some(p =>
+                filteredResponse.toLowerCase().includes(p)
+            )
+
+            if (isInvalid || filteredResponse.length > 200) {
+                return await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
+            }
+
+            await flowDynamic(filteredResponse)
+
+        } catch (error) {
+            console.error('❌ Error en dynamicFlow:', error)
+            await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
         }
     })
 
-const main = async () => {
+// 🚀 MAIN
+    const main = async () => {
     await googleSheetService.getFlows()
     await googleSheetService.getPrompts()
     await googleSheetService.getScheduledMessages()
-    
+
     setInterval(async () => {
-        console.log('🧹 Iniciando limpieza automática del historial...')
-        const deletedCount = await chatHistoryService.cleanOldHistories()
-        console.log(`🧹 Limpieza completada. Archivos eliminados: ${deletedCount}`)
+        console.log('🧹 Limpiando historial...')
+        await chatHistoryService.cleanOldHistories()
     }, 24 * 60 * 60 * 1000)
-    
-    const stats = await chatHistoryService.getStats()
-    console.log('📊 Estadísticas del historial:', stats)
-    
-    const scheduledStats = await scheduledMessageService.getStats()
-    console.log('📅 Estadísticas de mensajes programados:', scheduledStats)
 
     const adapterFlow = createFlow([dynamicFlow])
-    const adapterProvider = createProvider(Provider,{version: [2, 3000, 1025190524]})
+
+    const adapterProvider = createProvider(Provider, {
+        version: [2, 3000, 1035824857]
+    })
+
+    adapterProvider.on('qr', (qr) => {
+        console.log('📱 ESCANEA ESTE QR:')
+        qrcode.generate(qr, { small: true })
+    })
+
     const adapterDB = new Database()
 
     const { handleCtx, httpServer } = await createBot({
@@ -67,73 +186,15 @@ const main = async () => {
         provider: adapterProvider,
         database: adapterDB,
     })
-    
-    // Inicializar servicio de mensajes programados
-    scheduledMessageService.initialize(adapterProvider)
 
+    scheduledMessageService.initialize(adapterProvider)
+    
     adapterProvider.server.post(
         '/v1/messages',
         handleCtx(async (bot, req, res) => {
             const { number, message, urlMedia } = req.body
             await bot.sendMessage(number, message, { media: urlMedia ?? null })
             return res.end('sended')
-        })
-    )
-
-    adapterProvider.server.post(
-        '/v1/register',
-        handleCtx(async (bot, req, res) => {
-            const { number, name } = req.body
-            await bot.dispatch('REGISTER_FLOW', { from: number, name })
-            return res.end('trigger')
-        })
-    )
-
-    adapterProvider.server.post(
-        '/v1/samples',
-        handleCtx(async (bot, req, res) => {
-            const { number, name } = req.body
-            await bot.dispatch('SAMPLES', { from: number, name })
-            return res.end('trigger')
-        })
-    )
-
-    adapterProvider.server.post(
-        '/v1/blacklist',
-        handleCtx(async (bot, req, res) => {
-            const { number, intent } = req.body
-            if (intent === 'remove') bot.blacklist.remove(number)
-            if (intent === 'add') bot.blacklist.add(number)
-
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            return res.end(JSON.stringify({ status: 'ok', number, intent }))
-        })
-    )
-
-    adapterProvider.server.get(
-        '/v1/scheduled-stats',
-        handleCtx(async (bot, req, res) => {
-            const stats = await scheduledMessageService.getStats()
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            return res.end(JSON.stringify({ status: 'ok', stats }))
-        })
-    )
-
-    adapterProvider.server.post(
-        '/v1/scheduled-check',
-        handleCtx(async (bot, req, res) => {
-            await scheduledMessageService.forceCheck()
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            return res.end(JSON.stringify({ status: 'ok', message: 'Verificación forzada completada' }))
-        })
-    )
-
-    adapterProvider.server.post(
-        '/v1/scheduled-restart',
-        handleCtx(async (bot, req, res) => {
-            scheduledMessageService.restart()
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            return res.end(JSON.stringify({ status: 'ok', message: 'Servicio reiniciado' }))
         })
     )
 
