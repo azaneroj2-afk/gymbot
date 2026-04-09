@@ -18,138 +18,118 @@ const normalizeText = (text) => {
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
 }
+
 const blockedUsers = new Map()
+
+// 💰 PLANES FIJOS (Fuente de verdad)
+const plans = {
+    "1 mes": "💰 S/ 120\nIncluye: Evaluación física, rutina personalizada, plan de nutrición, asesoría.",
+    "3 meses": "💰 S/ 299\nIncluye: Evaluación física, rutina personalizada, plan de nutrición, clase grupal de baile fitness 💃, asesoría profesional.",
+    "6 meses": "💰 S/ 499\nIncluye: Evaluación física, rutina personalizada, plan de nutrición, clase grupal de baile fitness 💃, asesoría profesional.",
+    "1 año": "💰 S/ 599\nIncluye: Evaluación física completa, rutina personalizada, plan de nutrición, clases grupales, asesoría profesional."
+}
+
+// 🔥 FLUJO DINÁMICO
 const dynamicFlow = addKeyword(EVENTS.WELCOME)
     .addAction(async (ctx, { flowDynamic, provider }) => {
         try {
             const flows = await googleSheetService.getFlows()
-
             const userInputRaw = ctx.body || ''
             const userInput = normalizeText(userInputRaw)
             const phoneNumber = ctx.from
 
             console.log(`📩 Mensaje recibido: ${userInputRaw}`)
 
-               const now = Date.now()
-
+            const now = Date.now()
             if (blockedUsers.has(phoneNumber)) {
-            const unblockTime = blockedUsers.get(phoneNumber)
-
-            if (now < unblockTime) {
-             console.log("🚫 Usuario bloqueado temporalmente:", phoneNumber)
-             return
-                } else {
-             // ⏳ ya expiró → lo eliminamos
+                const unblockTime = blockedUsers.get(phoneNumber)
+                if (now < unblockTime) return console.log("🚫 Usuario bloqueado temporalmente:", phoneNumber)
                 blockedUsers.delete(phoneNumber)
-        console.log("✅ Usuario desbloqueado:", phoneNumber)
             }
-}
-            // 🚫 1. BLOQUEO DE PROMPT INJECTION / TROLL
+
+            // 🚫 BLOQUEO DE PROMPT INJECTION / TROLL
             const forbiddenPatterns = [
                 "ignora", "ignore", "actua como", "actúa como",
                 "roleplay", "kawaii", "anime", "uwu", "senpai",
                 "yamete", "daisuki", "amochito"
             ]
-
             if (forbiddenPatterns.some(p => userInput.includes(p))) {
+                await flowDynamic("🤖 No entiendo tu mensaje, pero puedo mostrarte los planes disponibles.")
                 return await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
             }
 
-            // 🛑 2. DERIVACIÓN A ASESOR HUMANO
-            if (
-                userInput.includes('asesor') ||
-                userInput.includes('humano') ||
-                userInput.includes('persona')
-            ) {
-                console.log("👩‍💼 Cliente solicita asesor:", phoneNumber)
-
-                await flowDynamic(` 
-                    👉 Perfecto, un asesor te atenderá en breve.
-                    📌 Te responderán por este mismo chat.
-                    🛒 Mantente atento para continuar tu inscripción.`)
-
-                blockedUsers.set(phoneNumber, Date.now() + 1800000)
+            // 🛑 DERIVACIÓN A ASESOR HUMANO
+            if (userInput.includes('asesor') || userInput.includes('humano') || userInput.includes('persona')) {
+                await flowDynamic(`👉 Perfecto, un asesor te atenderá en breve.\n📌 Te responderán por este mismo chat.\n🛒 Mantente atento.`)
+                blockedUsers.set(phoneNumber, Date.now() + 1800000) // 30 min
                 return
             }
 
-            // 💰 3. DETECCIÓN DE PAGO (PRIORIDAD MÁXIMA)
-            if (
-                userInput.includes('ya pague') ||
-                userInput.includes('ya pague') ||
-                userInput.includes('ya yapie') ||
-                userInput.includes('ya yapee') ||
-                userInput.includes('pagado') ||
-                userInput.includes('listo') ||
-                userInput.includes('ya hice el pago') ||
-                userInput.includes('ya transferi')
-            ) {
-                console.log("💰 Cliente pagó → pasar a humano:", phoneNumber)
-
-                await flowDynamic(`     
-                    👉 Perfecto, tu pago está en proceso de validación.
-                    👉 Un asesor te atenderá en breve
-                    📌 Envía tu captura + nombre completo + DNI + celular.
-                    🛒 También puedes acercarte al gimnasio para activar tu acceso.`)
-
-                blockedUsers.set(phoneNumber, Date.now() + 10000)
-                
+            // 💰 DETECCIÓN DE PAGO
+            const pagoPatterns = ["ya pague","ya yapie","ya yapee","pagado","listo","ya hice el pago","ya transferi"]
+            if (pagoPatterns.some(p => userInput.includes(p))) {
+                await flowDynamic(`👉 Perfecto, tu pago está en proceso de validación.\n👉 Un asesor te atenderá en breve\n📌 Envía tu captura + nombre completo + DNI + celular.`)
+                blockedUsers.set(phoneNumber, Date.now() + 10000) // 10 seg
                 return
             }
 
-            // 🔍 4. BUSCAR FLUJO EN SHEETS
+            // 🔍 RESPONDER PLANES FIJOS
+            const matchedPlan = Object.keys(plans).find(p => userInput.includes(normalizeText(p)))
+            if (matchedPlan) {
+                await flowDynamic(`🔥 PLAN ${matchedPlan.toUpperCase()}\n${plans[matchedPlan]}\n🛒 Yapea al 941 398 383 y envía tu captura + escribe "pagado" para activarlo.`)
+                return
+            }
+
+            // 🔍 BUSCAR FLUJO EN SHEETS
             const triggeredFlow = flows.find(f => {
                 if (!f.addKeyword) return false
-
-                const keywords = f.addKeyword
-                    .split(',')
-                    .map(k => normalizeText(k))
-
+                const keywords = f.addKeyword.split(',').map(k => normalizeText(k))
                 return keywords.some(keyword => userInput.includes(keyword))
             })
-
             if (triggeredFlow) {
-                console.log("✅ Flujo detectado:", triggeredFlow.addKeyword)
-
                 const answer = triggeredFlow.addAnswer
                 const mediaUrl = triggeredFlow.media?.trim()
-
                 await chatHistoryService.saveMessage(phoneNumber, 'user', userInputRaw)
                 await chatHistoryService.saveMessage(phoneNumber, 'assistant', answer)
-
-                if (mediaUrl) {
-                    await flowDynamic(answer, { media: mediaUrl })
-                } else {
-                    await flowDynamic(answer)
-                }
-
+                if (mediaUrl) await flowDynamic(answer, { media: mediaUrl })
+                else await flowDynamic(answer)
                 return
             }
 
-            // 🤖 5. FALLBACK IA ULTRA CONTROLADO
-            console.log('🤖 Usando IA controlada...')
+            // 🤖 SENSIBLES (lesión, dolor, etc.)
+            const sensitivePatterns = ["lesion","dolor","medicamento","embarazo","enfermedad","operacion","cirugia","tratamiento","pastilla"]
+            if (sensitivePatterns.some(p => userInput.includes(p))) {
+                return await flowDynamic("👉 Para esto es mejor hablar con un asesor.\n📌 Te atenderán en breve.")
+            }
 
-            const aiResponse = await groqService.getResponse(userInputRaw, phoneNumber)
+            // 🤖 FALLBACK IA EDUCATIVA
+            let aiResponse = await groqService.getResponse(userInputRaw, phoneNumber)
 
-            const invalidPatterns = [
-                "no puedo", "lo siento", "no estoy programado",
-                "kawaii", "anime", "uwu", "senpai",
-                "¿como estas?", "hablar contigo",
-                "sucursales", "direcciones", "ofertas"
-            ]
+            // Limitar la respuesta de IA SOLO si no es plan
+            if (!matchedPlan && aiResponse.length > 200) aiResponse = aiResponse.slice(0,200)
 
-            let filteredResponse = aiResponse
-                .replace(/\*.*?\*/g, '')
-                .trim()
-
-            const isInvalid = invalidPatterns.some(p =>
-                filteredResponse.toLowerCase().includes(p)
-            )
-
-            if (isInvalid || filteredResponse.length > 200) {
+            // Filtrar respuestas no deseadas de IA
+            const invalidPatterns = ["no puedo","lo siento","no estoy programado","kawaii","anime","uwu","senpai","¿como estas?","hablar contigo","sucursales","direcciones","ofertas"]
+            if (invalidPatterns.some(p => aiResponse.toLowerCase().includes(p))) {
                 return await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
             }
 
-            await flowDynamic(filteredResponse)
+            // Añadir tips
+            const nutritionTips = [
+                "💡 Recuerda hidratarte antes, durante y después del entrenamiento.",
+                "💡 Prioriza proteínas en tus comidas para ganar masa muscular.",
+                "💡 Dormir 7-8 horas ayuda a la recuperación y crecimiento muscular."
+            ]
+            const recoveryTips = [
+                "💡 No olvides estirar después de entrenar para evitar lesiones.",
+                "💡 Si sientes fatiga, dale tiempo a tu cuerpo de recuperarse.",
+                "💡 Masajes o foam roller ayudan a relajar los músculos."
+            ]
+            const tipPool = nutritionTips.concat(recoveryTips)
+            const randomTip = tipPool[Math.floor(Math.random() * tipPool.length)]
+
+            // Respuesta final
+            await flowDynamic(`${aiResponse}\n${randomTip}\n💡 Consulta siempre con un asesor si tienes dudas.`)
 
         } catch (error) {
             console.error('❌ Error en dynamicFlow:', error)
@@ -158,7 +138,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
     })
 
 // 🚀 MAIN
-    const main = async () => {
+const main = async () => {
     await googleSheetService.getFlows()
     await googleSheetService.getPrompts()
     await googleSheetService.getScheduledMessages()
@@ -169,10 +149,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
     }, 24 * 60 * 60 * 1000)
 
     const adapterFlow = createFlow([dynamicFlow])
-
-    const adapterProvider = createProvider(Provider, {
-        version: [2, 3000, 1035824857]
-    })
+    const adapterProvider = createProvider(Provider, { version: [2, 3000, 1035824857] })
 
     adapterProvider.on('qr', (qr) => {
         console.log('📱 ESCANEA ESTE QR:')
@@ -180,15 +157,10 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
     })
 
     const adapterDB = new Database()
-
-    const { handleCtx, httpServer } = await createBot({
-        flow: adapterFlow,
-        provider: adapterProvider,
-        database: adapterDB,
-    })
+    const { handleCtx, httpServer } = await createBot({ flow: adapterFlow, provider: adapterProvider, database: adapterDB })
 
     scheduledMessageService.initialize(adapterProvider)
-    
+
     adapterProvider.server.post(
         '/v1/messages',
         handleCtx(async (bot, req, res) => {
