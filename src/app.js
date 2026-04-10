@@ -10,146 +10,404 @@ import scheduledMessageService from './scheduled-messages.js'
 
 const PORT = process.env.PORT ?? 3008
 
+const BUSINESS_INFO = {
+    mapsUrl: 'https://maps.app.goo.gl/UduDJ34PsHwnpPYs5',
+    yapeNumber: '941 398 383'
+}
+
 // 🔥 NORMALIZAR TEXTO
 const normalizeText = (text) => {
-    return text
+    return String(text || '')
         .toLowerCase()
         .trim()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
 }
 
-const blockedUsers = new Map()
-
-// 💰 PLANES FIJOS (Fuente de verdad)
-const plans = {
-    "1 mes": "💰 S/ 120\nIncluye: Evaluación física, rutina personalizada, plan de nutrición, asesoría.",
-    "3 meses": "💰 S/ 299\nIncluye: Evaluación física, rutina personalizada, plan de nutrición, clase grupal de baile fitness 💃, asesoría profesional.",
-    "6 meses": "💰 S/ 499\nIncluye: Evaluación física, rutina personalizada, plan de nutrición, clase grupal de baile fitness 💃, asesoría profesional.",
-    "1 año": "💰 S/ 599\nIncluye: Evaluación física completa, rutina personalizada, plan de nutrición, clases grupales, asesoría profesional."
+const includesAny = (text, patterns = []) => {
+    return patterns.some(pattern => text.includes(normalizeText(pattern)))
 }
 
-// 🔥 FLUJO DINÁMICO
+const getPlanFromKeyword = (keyword = '') => {
+    const normalizedKeyword = normalizeText(keyword)
+
+    if (normalizedKeyword.includes('1 mes')) return '1 mes'
+    if (normalizedKeyword.includes('3 meses')) return '3 meses'
+    if (normalizedKeyword.includes('6 meses')) return '6 meses'
+    if (normalizedKeyword.includes('1 ano')) return '1 año'
+
+    return null
+}
+
+const blockedUsers = new Map()
+const userContext = new Map()
+
+const getUserState = (phoneNumber) => userContext.get(phoneNumber) || {}
+
+const updateUserState = (phoneNumber, updates) => {
+    const currentState = getUserState(phoneNumber)
+    userContext.set(phoneNumber, { ...currentState, ...updates })
+}
+
+const forbiddenPatterns = [
+    "ignora", "ignore", "actua como", "actúa como",
+    "roleplay", "kawaii", "anime", "uwu"
+]
+
+const locationPatterns = [
+    'ubicacion', 'ubicación', 'direccion', 'dirección',
+    'donde quedan', 'dónde quedan', 'lugar', 'maps', 'local'
+]
+
+const paymentMethodPatterns = [
+    'yape', 'yapear', 'metodo de pago', 'método de pago',
+    'como pago', 'cómo pago', 'formas de pago', 'pago'
+]
+
+const beginnerPatterns = [
+    'soy nuevo', 'soy nueva', 'nunca he entrenado',
+    'recien empiezo', 'recién empiezo', 'principiante',
+    'primera vez', 'nunca fui al gym', 'nunca hice gym', 'soy principiante'
+]
+
+const injuryPatterns = [
+    'lesion', 'lesión', 'rodilla', 'dolor', 'operacion',
+    'operación', 'fisioterapia', 'columna', 'espalda',
+    'molestia', 'me lastime', 'me lastimé', 'lumbar', 'manguito rotador'
+]
+
+const canTrainPatterns = [
+    'entonces no puedo entrenar',
+    'si puedo entrenar',
+    'sí puedo entrenar',
+    'puedo entrenar',
+    'no puedo entrenar',
+    'puedo entrenar todos los dias'
+]
+
+const weightLossPatterns = [
+    'bajar de peso', 'bajar grasa', 'quemar grasa',
+    'adelgazar', 'perder peso'
+]
+
+const dayNightPatterns = [
+    'de noche o de dia',
+    'de noche o de día',
+    'de dia o de noche',
+    'de día o de noche',
+    'mejor entrenar de noche',
+    'mejor entrenar de dia',
+    'mejor entrenar de día',
+    'cual es el mejor horario'
+]
+
+const lowTrafficPatterns = [
+    'menos gente', 'mas vacio', 'más vacío',
+    'menos afluencia', 'menos lleno', 'mas tranquilo',
+    'más tranquilo'
+]
+
+const planIntentPatterns = [
+    'quiero algo completo',
+    'algo completo',
+    'cual me recomiendas',
+    'cuál me recomiendas',
+    'que me recomiendas',
+    'qué me recomiendas',
+    'recomendado'
+]
+
 const dynamicFlow = addKeyword(EVENTS.WELCOME)
-    .addAction(async (ctx, { flowDynamic, provider }) => {
+    .addAction(async (ctx, { flowDynamic }) => {
         try {
             const flows = await googleSheetService.getFlows()
             const userInputRaw = ctx.body || ''
             const userInput = normalizeText(userInputRaw)
             const phoneNumber = ctx.from
+            const userState = getUserState(phoneNumber)
+            const now = Date.now()
 
             console.log(`📩 Mensaje recibido: ${userInputRaw}`)
 
-            const now = Date.now()
+            const sendReply = async (message, options = {}) => {
+                await chatHistoryService.saveMessage(phoneNumber, 'user', userInputRaw)
+                await chatHistoryService.saveMessage(phoneNumber, 'assistant', message)
+
+                if (options.media) {
+                    await flowDynamic(message, { media: options.media })
+                } else {
+                    await flowDynamic(message)
+                }
+            }
+
+            // 🚫 BLOQUEADOS
             if (blockedUsers.has(phoneNumber)) {
                 const unblockTime = blockedUsers.get(phoneNumber)
-                if (now < unblockTime) return console.log("🚫 Usuario bloqueado temporalmente:", phoneNumber)
+                if (now < unblockTime) return
                 blockedUsers.delete(phoneNumber)
             }
 
-            // 🚫 BLOQUEO DE PROMPT INJECTION / TROLL
-            const forbiddenPatterns = [
-                "ignora", "ignore", "actua como", "actúa como",
-                "roleplay", "kawaii", "anime", "uwu", "senpai",
-                "yamete", "daisuki", "amochito"
-            ]
-            if (forbiddenPatterns.some(p => userInput.includes(p))) {
-                await flowDynamic("🤖 No entiendo tu mensaje, pero puedo mostrarte los planes disponibles.")
-                return await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
+            // 🚫 ANTI PROMPT INJECTION
+            if (forbiddenPatterns.some(p => userInput.includes(normalizeText(p)))) {
+                return await sendReply(
+                    "👉 Te ayudo a elegir el mejor plan.\n📌 Escribe *planes*.\n❓ ¿Buscas algo económico o completo?"
+                )
             }
 
-            // 🛑 DERIVACIÓN A ASESOR HUMANO
-            if (userInput.includes('asesor') || userInput.includes('humano') || userInput.includes('persona')) {
-                await flowDynamic(`👉 Perfecto, un asesor te atenderá en breve.\n📌 Te responderán por este mismo chat.\n🛒 Mantente atento.`)
-                blockedUsers.set(phoneNumber, Date.now() + 1800000) // 30 min
+            // 👨‍💼 HUMANO
+            if (includesAny(userInput, ['asesor', 'humano'])) {
+                await sendReply("👉 Un asesor te responderá en breve.")
+                blockedUsers.set(phoneNumber, now + 1800000)
                 return
             }
 
-            // 💰 DETECCIÓN DE PAGO
-            const pagoPatterns = ["ya pague","ya yapie","ya yapee","pagado","listo","ya hice el pago","ya transferi"]
-            if (pagoPatterns.some(p => userInput.includes(p))) {
-                await flowDynamic(`👉 Perfecto, tu pago está en proceso de validación.\n👉 Un asesor te atenderá en breve\n📌 Envía tu captura + nombre completo + DNI + celular.`)
-                blockedUsers.set(phoneNumber, Date.now() + 10000) // 10 seg
+            // 💰 PAGO CONFIRMADO
+            if (
+                includesAny(userInput, [
+                    'ya pague', 'ya pagué', 'pagado',
+                    'ya yap', 'listo', 'ya hice el yape'
+                ])
+            ) {
+                await sendReply(
+                    "👉 ¡Gracias! Estamos validando tu pago.\n📌 En breve un asesor te escribirá para continuar con tu inscripción."
+                )
+                blockedUsers.set(phoneNumber, now + 10000)
                 return
             }
 
-            // 🔍 RESPONDER PLANES FIJOS
-            const matchedPlan = Object.keys(plans).find(p => userInput.includes(normalizeText(p)))
-            if (matchedPlan) {
-                await flowDynamic(`🔥 PLAN ${matchedPlan.toUpperCase()}\n${plans[matchedPlan]}\n🛒 Yapea al 941 398 383 y envía tu captura + escribe "pagado" para activarlo.`)
-                return
+            // 📍 UBICACIÓN
+            if (includesAny(userInput, locationPatterns)) {
+                updateUserState(phoneNumber, { lastIntent: 'location' })
+
+                return await sendReply(
+                    `👉 Aquí tienes la ubicación exacta:\n${BUSINESS_INFO.mapsUrl}\n📌 Si quieres, también puedes visitarnos primero y luego activar tu plan.`
+                )
             }
 
-            // 🔍 BUSCAR FLUJO EN SHEETS
+            // 💳 MÉTODO DE PAGO
+            if (includesAny(userInput, paymentMethodPatterns)) {
+                updateUserState(phoneNumber, { lastIntent: 'payment' })
+
+                return await sendReply(
+                    `👉 Solo trabajamos con *Yape*.\n📌 Yapea al *${BUSINESS_INFO.yapeNumber}*\n📌 Luego envía tu captura.\n❓ ¿Qué plan quieres activar?`
+                )
+            }
+
+            // 🩹 LESIÓN / DOLOR
+            if (includesAny(userInput, injuryPatterns)) {
+                updateUserState(phoneNumber, {
+                    lastIntent: 'injury',
+                    hasInjury: true
+                })
+
+                return await sendReply(
+                    "👉 Sí podrías entrenar, pero de forma adaptada.\n📌 Si tienes una lesión o molestia, primero debemos evaluarte para no empeorarla.\n💡 Todos los planes incluyen evaluación física.\n❓ ¿Tu lesión está diagnosticada y ahora mismo sientes dolor al caminar, agacharte o hacer fuerza?"
+                )
+            }
+
+            // ❓ SI PUEDE ENTRENAR O NO
+            if (includesAny(userInput, canTrainPatterns)) {
+                updateUserState(phoneNumber, { lastIntent: 'can_train' })
+
+                return await sendReply(
+                    "👉 No necesariamente significa que no puedas entrenar.\n📌 Muchas personas entrenan con adaptación, pero primero habría que evaluarte para no empeorar la molestia.\n💡 Si quieres, te orientamos según tu caso."
+                )
+            }
+
+            // 🆕 PRINCIPIANTE
+            if (includesAny(userInput, beginnerPatterns)) {
+                updateUserState(phoneNumber, {
+                    lastIntent: 'beginner',
+                    level: 'principiante'
+                })
+
+                return await sendReply(
+                    "👉 Si recién empiezas, no te preocupes.\n📌 La rutina se adapta a tu nivel desde cero.\n💡 Empezamos de forma progresiva según tu objetivo.\n❓ ¿Buscas bajar de peso, tonificar o ganar masa?"
+                )
+            }
+
+            // ⏰ DÍA O NOCHE
+            if (includesAny(userInput, dayNightPatterns)) {
+                updateUserState(phoneNumber, { lastIntent: 'schedule_advice' })
+
+                return await sendReply(
+                    "👉 Para ver resultados, lo más importante no es si entrenas de día o de noche, sino el horario que puedas mantener con constancia.\n📌 Si en el día tienes más energía, perfecto; si por trabajo te acomoda más la noche, también funciona.\n❓ Si quieres, te recomiendo el horario según tu rutina."
+                )
+            }
+
+            // 👥 MENOS GENTE
+            if (includesAny(userInput, lowTrafficPatterns)) {
+                updateUserState(phoneNumber, { lastIntent: 'low_traffic' })
+
+                return await sendReply(
+                    "👉 Si buscas entrenar más tranquila, te podemos orientar según el turno que prefieras.\n📌 La afluencia puede variar según el día.\n❓ ¿Prefieres mañana, tarde o noche?"
+                )
+            }
+
+            // 🔥 PRIORIDAD PLANES / PRECIOS
+            if (
+                includesAny(userInput, [
+                    'planes', 'ver planes', 'opciones',
+                    'precio', 'precios'
+                ])
+            ) {
+                const planFlow = flows.find(f =>
+                    f.addKeyword &&
+                    normalizeText(f.addKeyword).includes('planes')
+                )
+
+                if (planFlow) {
+                    console.log("🔥 Forzando flujo PLANES")
+                    updateUserState(phoneNumber, { lastIntent: 'plans' })
+                    await sendReply(planFlow.addAnswer)
+                    return
+                }
+            }
+
+            // 🎯 INTENCIÓN DE COMPRA CONTROLADA
+            if (includesAny(userInput, planIntentPatterns)) {
+                const plan3 = flows.find(f =>
+                    f.addKeyword &&
+                    normalizeText(f.addKeyword).includes('3 meses')
+                )
+
+                if (plan3) {
+                    console.log("🎯 Redirigiendo a plan 3 meses")
+                    updateUserState(phoneNumber, {
+                        lastIntent: 'sales',
+                        selectedPlan: '3 meses'
+                    })
+
+                    await sendReply(plan3.addAnswer)
+                    return
+                }
+            }
+
+            // 🔍 DETECTAR FLUJO NORMAL
             const triggeredFlow = flows.find(f => {
                 if (!f.addKeyword) return false
-                const keywords = f.addKeyword.split(',').map(k => normalizeText(k))
+
+                const keywords = f.addKeyword
+                    .split(',')
+                    .map(k => normalizeText(k))
+
                 return keywords.some(keyword => userInput.includes(keyword))
             })
+
             if (triggeredFlow) {
+                console.log("✅ Flujo detectado:", triggeredFlow.addKeyword)
+
                 const answer = triggeredFlow.addAnswer
                 const mediaUrl = triggeredFlow.media?.trim()
-                await chatHistoryService.saveMessage(phoneNumber, 'user', userInputRaw)
-                await chatHistoryService.saveMessage(phoneNumber, 'assistant', answer)
-                if (mediaUrl) await flowDynamic(answer, { media: mediaUrl })
-                else await flowDynamic(answer)
+                const detectedPlan = getPlanFromKeyword(triggeredFlow.addKeyword)
+
+                if (detectedPlan) {
+                    updateUserState(phoneNumber, {
+                        selectedPlan: detectedPlan,
+                        lastIntent: 'plan_selected'
+                    })
+                }
+
+                if (mediaUrl) {
+                    await sendReply(answer, { media: mediaUrl })
+                } else {
+                    await sendReply(answer)
+                }
                 return
             }
 
-            // 🤖 SENSIBLES (lesión, dolor, etc.)
-            const sensitivePatterns = ["lesion","dolor","medicamento","embarazo","enfermedad","operacion","cirugia","tratamiento","pastilla"]
-            if (sensitivePatterns.some(p => userInput.includes(p))) {
-                return await flowDynamic("👉 Para esto es mejor hablar con un asesor.\n📌 Te atenderán en breve.")
+            // 🧠 DETECTAR SI ES PREGUNTA
+            const isQuestion = [
+                "?", "como", "cómo", "cuanto", "cuánto", "cuantos", "cuántos",
+                "puedo", "cada cuanto", "cada cuánto", "es bueno", "recomiendas",
+                "se puede", "tiene", "incluye", "donde", "dónde",
+                "ubicacion", "ubicación", "horario", "dias", "días"
+            ].some(q => userInput.includes(normalizeText(q)))
+
+            if (!isQuestion) {
+                return await sendReply(
+                    "👉 Te ayudo a elegir el mejor plan.\n📌 Escribe *planes*.\n❓ ¿Buscas algo económico o completo?"
+                )
             }
 
-            // 🤖 FALLBACK IA EDUCATIVA
+            // 🤖 IA CONTROLADA
+            console.log("🤖 Usando IA...")
             let aiResponse = await groqService.getResponse(userInputRaw, phoneNumber)
 
-            // Limitar la respuesta de IA SOLO si no es plan
-            if (!matchedPlan && aiResponse.length > 200) aiResponse = aiResponse.slice(0,200)
+            const shouldReinforceSelectedPlan =
+                userState.selectedPlan &&
+                includesAny(userInput, [
+                    'planes', 'plan', 'precio', 'precios',
+                    'quiero', 'pagar', 'activar', 'inscribirme',
+                    'me interesa', 'cual', 'cuál'
+                ])
 
-            // Filtrar respuestas no deseadas de IA
-            const invalidPatterns = ["no puedo","lo siento","no estoy programado","kawaii","anime","uwu","senpai","¿como estas?","hablar contigo","sucursales","direcciones","ofertas"]
-            if (invalidPatterns.some(p => aiResponse.toLowerCase().includes(p))) {
-                return await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
+            if (
+                shouldReinforceSelectedPlan &&
+                !normalizeText(aiResponse).includes(normalizeText(userState.selectedPlan))
+            ) {
+                aiResponse += `\n💡 Puedes elegir el plan de ${userState.selectedPlan}`
             }
 
-            // Añadir tips
-            const nutritionTips = [
-                "💡 Recuerda hidratarte antes, durante y después del entrenamiento.",
-                "💡 Prioriza proteínas en tus comidas para ganar masa muscular.",
-                "💡 Dormir 7-8 horas ayuda a la recuperación y crecimiento muscular."
+            // 🚫 BLOQUEAR PROMOCIONES INVENTADAS POR IA
+            const forbiddenSalesTerms = [
+                "descuento", "oferta", "promocion", "promoción",
+                "rebaja", "2x1", "gratis", "precio especial"
             ]
-            const recoveryTips = [
-                "💡 No olvides estirar después de entrenar para evitar lesiones.",
-                "💡 Si sientes fatiga, dale tiempo a tu cuerpo de recuperarse.",
-                "💡 Masajes o foam roller ayudan a relajar los músculos."
-            ]
-            const tipPool = nutritionTips.concat(recoveryTips)
-            const randomTip = tipPool[Math.floor(Math.random() * tipPool.length)]
 
-            // Respuesta final
-            await flowDynamic(`${aiResponse}\n${randomTip}\n💡 Consulta siempre con un asesor si tienes dudas.`)
+            if (includesAny(normalizeText(aiResponse), forbiddenSalesTerms)) {
+                return await sendReply(
+                    "👉 No contamos con promociones adicionales.\n❓ ¿Quieres ver los planes disponibles?"
+                )
+            }
+
+            // 🚫 SOLO YAPE COMO MÉTODO DE PAGO
+            const unsupportedPaymentTerms = [
+                'tarjeta', 'visa', 'mastercard', 'transferencia',
+                'deposito', 'depósito', 'plin'
+            ]
+
+            if (includesAny(normalizeText(aiResponse), unsupportedPaymentTerms)) {
+                return await sendReply(
+                    `👉 El método de pago disponible es solo *Yape*.\n📌 Yapea al *${BUSINESS_INFO.yapeNumber}* y envía tu captura.\n❓ ¿Qué plan te interesa?`
+                )
+            }
+
+            // ✂️ LIMPIAR RESPUESTAS REPETIDAS
+            aiResponse = aiResponse.replace(/(\❓.*\n?){2,}/g, '❓ ¿Quieres ver los planes disponibles?\n').trim()
+
+            // 🔒 CONTROL FINAL
+            if (!aiResponse) {
+                return await sendReply(
+                    "👉 Escribe *planes* para ver las opciones disponibles."
+                )
+            }
+
+            if (aiResponse.length > 450) {
+                aiResponse = `${aiResponse.slice(0, 430).trim()}\n\n❓ ¿Quieres que te recomiende un plan?`
+            }
+
+            await sendReply(aiResponse)
 
         } catch (error) {
             console.error('❌ Error en dynamicFlow:', error)
-            await flowDynamic("Escribe 'planes' para ver opciones disponibles.")
+            await flowDynamic(
+                "👉 Escribe *planes* para ver las opciones disponibles."
+            )
         }
     })
 
-// 🚀 MAIN
+// 🚀 CONFIGURACIÓN
 const main = async () => {
     await googleSheetService.getFlows()
     await googleSheetService.getPrompts()
     await googleSheetService.getScheduledMessages()
 
-    setInterval(async () => {
-        console.log('🧹 Limpiando historial...')
-        await chatHistoryService.cleanOldHistories()
-    }, 24 * 60 * 60 * 1000)
-
     const adapterFlow = createFlow([dynamicFlow])
-    const adapterProvider = createProvider(Provider, { version: [2, 3000, 1035824857] })
+
+    const adapterProvider = createProvider(Provider, {
+        version: [2, 3000, 1035824857]
+    })
 
     adapterProvider.on('qr', (qr) => {
         console.log('📱 ESCANEA ESTE QR:')
@@ -157,18 +415,14 @@ const main = async () => {
     })
 
     const adapterDB = new Database()
-    const { handleCtx, httpServer } = await createBot({ flow: adapterFlow, provider: adapterProvider, database: adapterDB })
+
+    const { httpServer } = await createBot({
+        flow: adapterFlow,
+        provider: adapterProvider,
+        database: adapterDB,
+    })
 
     scheduledMessageService.initialize(adapterProvider)
-
-    adapterProvider.server.post(
-        '/v1/messages',
-        handleCtx(async (bot, req, res) => {
-            const { number, message, urlMedia } = req.body
-            await bot.sendMessage(number, message, { media: urlMedia ?? null })
-            return res.end('sended')
-        })
-    )
 
     httpServer(+PORT)
 }
