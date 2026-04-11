@@ -222,7 +222,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
                 })
 
                 return await sendReply(
-                    "👉 Si recién empiezas, no te preocupes.\n📌 La rutina se adapta a tu nivel desde cero.\n💡 Empezamos de forma progresiva según tu objetivo.\n❓ ¿Buscas bajar de peso, tonificar o ganar masa?"
+                    "👉 Si recién empiezas, no te preocupes.\n📌 La rutina se adapta a tu nivel desde cero.\n💡 Empezamos de forma progresiva según tu objetivo.\n❓ ¿Buscas bajar de peso o ganar masa muscular?"
                 )
             }
 
