@@ -315,7 +315,38 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
                 }
                 return
             }
+            // 💰 INTERPRETAR "MENSUAL" CON CONTEXTO (ANTI ERROR IA)
+if (includesAny(userInput, ['mensual'])) {
 
+    // Caso: viene de ver planes o plan estudiantil
+    if (userState.lastIntent === 'plans' || userState.selectedPlan === 'estudiantil') {
+        return await sendReply(
+            "👉 No es mensual.\n📌 El plan estudiantil es un solo pago de S/239 por todo tu ciclo.\n💡 Te sale más económico que pagar mes a mes.\n❓ Si prefieres, también tenemos plan mensual de S/120"
+        )
+    }
+
+    // Caso: intención directa de plan mensual
+    updateUserState(phoneNumber, {
+        selectedPlan: '1 mes',
+        lastIntent: 'plan_selected'
+    })
+
+    const plan1 = flows.find(f =>
+        f.addKeyword &&
+        normalizeText(f.addKeyword).includes('1 mes')
+    )
+
+    if (plan1) {
+        console.log("🔥 Forzando plan 1 mes")
+        await sendReply(plan1.addAnswer)
+        return
+    }
+
+    // fallback seguro
+    return await sendReply(
+        "👉 El plan mensual es de 1 mes.\n💰 S/120\n📌 Incluye acceso completo.\n❓ ¿Quieres activarlo?"
+    )
+}
             // 🧠 DETECTAR SI ES PREGUNTA
             const isQuestion = [
                 "?", "como", "cómo", "cuanto", "cuánto", "cuantos", "cuántos",
@@ -333,7 +364,24 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
             // 🤖 IA CONTROLADA
             console.log("🤖 Usando IA...")
             let aiResponse = await groqService.getResponse(userInputRaw, phoneNumber)
+// 🚫 VALIDACIÓN DE PRECIOS (ANTI-ALUCINACIÓN)
+const validPrices = ['239', '120', '299', '499', '599']
 
+const priceRegex = /s\/?\s?\d+/gi
+const detectedPrices = aiResponse.match(priceRegex) || []
+
+const hasInvalidPrice = detectedPrices.some(price => {
+    const num = price.replace(/[^0-9]/g, '')
+    return !validPrices.includes(num)
+})
+
+if (hasInvalidPrice) {
+    console.log("🚫 IA inventó precio:", aiResponse)
+
+    return await sendReply(
+        "👉 Escribe *planes* para ver los precios correctos."
+    )
+}
             const shouldReinforceSelectedPlan =
                 userState.selectedPlan &&
                 includesAny(userInput, [
