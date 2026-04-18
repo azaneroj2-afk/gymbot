@@ -150,7 +150,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
             // 🚫 ANTI PROMPT INJECTION
             if (forbiddenPatterns.some(p => userInput.includes(normalizeText(p)))) {
                 return await sendReply(
-                    "👉 Te ayudo a elegir el mejor plan.\n📌 Escribe *planes*.\n❓ ¿Buscas algo económico o completo?"
+                    "👉 Te ayudo a elegir el mejor plan.\n📌 Escribe *planes*.\n❓"
                 )
             }
 
@@ -180,7 +180,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
                 updateUserState(phoneNumber, { lastIntent: 'location' })
 
                 return await sendReply(
-                    `👉 Aquí tienes la ubicación exacta:\n${BUSINESS_INFO.mapsUrl}\n📌 Si quieres, también puedes visitarnos primero y luego activar tu plan.`
+                    `👉 Aquí tienes la ubicación exacta:\n${BUSINESS_INFO.mapsUrl}\n📌 Te esperamos.`
                 )
             }
 
@@ -189,7 +189,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
                 updateUserState(phoneNumber, { lastIntent: 'payment' })
 
                 return await sendReply(
-                    `👉 Solo trabajamos con *Yape*.\n📌 Yapea al *${BUSINESS_INFO.yapeNumber}*\n📌 Luego envía tu captura.\n❓ ¿Qué plan quieres activar?`
+                    `👉 Solo trabajamos con *Yape*.\n📌 Yapea al *${BUSINESS_INFO.yapeNumber}*\n📌 Luego envía tu captura.\n❓`
                 )
             }
 
@@ -201,6 +201,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
                 })
 
                 return await sendReply(
+                    
                     "👉 Sí podrías entrenar, pero de forma adaptada.\n📌 Si tienes una lesión o molestia, primero debemos evaluarte para no empeorarla.\n💡 Todos los planes incluyen evaluación física.\n❓ ¿Tu lesión está diagnosticada y ahora mismo sientes dolor al caminar, agacharte o hacer fuerza?"
                 )
             }
@@ -240,7 +241,7 @@ const dynamicFlow = addKeyword(EVENTS.WELCOME)
                 updateUserState(phoneNumber, { lastIntent: 'low_traffic' })
 
                 return await sendReply(
-                    "👉 Si buscas entrenar más tranquila, te podemos orientar según el turno que prefieras.\n📌 La afluencia puede variar según el día.\n❓ ¿Prefieres mañana, tarde o noche?"
+                    "👉 Si buscas entrenar más tranquila, te podemos orientar según el turno que prefieras.\n📌 La afluencia puede variar según el día.\n❓"
                 )
             }
 
@@ -344,7 +345,7 @@ if (includesAny(userInput, ['mensual'])) {
 
     // fallback seguro
     return await sendReply(
-        "👉 El plan mensual es de 1 mes.\n💰 S/120\n📌 Incluye acceso completo.\n❓ ¿Quieres activarlo?"
+        "👉 El plan mensual es de 1 mes.\n💰 S/120\n📌 Incluye acceso completo.\n❓"
     )
 }
             // 🧠 DETECTAR SI ES PREGUNTA
@@ -357,7 +358,7 @@ if (includesAny(userInput, ['mensual'])) {
 
             if (!isQuestion) {
                 return await sendReply(
-                    "👉 Te ayudo a elegir el mejor plan.\n📌 Escribe *planes*.\n❓ ¿Buscas algo económico o completo?"
+                    "👉 Te ayudo a elegir el mejor plan.\n📌 Escribe *planes*.\n❓"
                 )
             }
 
@@ -405,7 +406,7 @@ if (hasInvalidPrice) {
 
             if (includesAny(normalizeText(aiResponse), forbiddenSalesTerms)) {
                 return await sendReply(
-                    "👉 No contamos con promociones adicionales.\n❓ ¿Quieres ver los planes disponibles?"
+                    "👉 No contamos con promociones adicionales.\n❓ ¿Quieres ver los planes disponibles, escribe *planes*?"
                 )
             }
 
